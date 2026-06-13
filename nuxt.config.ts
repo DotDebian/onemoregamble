@@ -9,6 +9,14 @@ export default defineNuxtConfig({
 
   css: ['~/assets/css/main.css'],
 
+  nitro: {
+    // Keep the Claude Agent SDK (and its bundled native binary) OUT of the
+    // server bundle, loaded from node_modules at runtime instead. Required so
+    // the subscription path (`claude -p`) can locate and spawn its binary
+    // inside the container. The image ships node_modules for this.
+    externals: { external: ['@anthropic-ai/claude-agent-sdk'] },
+  },
+
   runtimeConfig: {
     // Filled from NUXT_ANTHROPIC_API_KEY at runtime. The server route also
     // falls back to the plain ANTHROPIC_API_KEY env var (and the SDK default).

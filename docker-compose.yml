@@ -1,11 +1,19 @@
-# Déploiement sur un VPS Docker (derrière Nginx Proxy Manager) :
-#   git clone git@github.com:DotDebian/onemoregamble.git && cd onemoregamble
-#   printf 'ANTHROPIC_API_KEY=sk-ant-...\n' > .env      # clé de prod (ce .env reste local, gitignoré)
-#   docker compose up -d --build
-#   docker compose logs -f
+# Déploiement VPS Docker — abonnement Claude (claude -p) en primaire, repli API.
 #
-# Puis dans Nginx Proxy Manager → Proxy Host vers  http://127.0.0.1:3000
-# (ou http://onemoregamble:3000 si tu utilises l'option "réseau partagé" en bas).
+# 1) Sur le VPS (où `claude` est installé et connecté) :
+#       claude setup-token            # → copie le token long-lived
+# 2) Récupère le code + crée le .env (reste local, gitignoré) :
+#       git clone git@github.com:DotDebian/onemoregamble.git && cd onemoregamble
+#       cat > .env <<'EOF'
+#       CLAUDE_CODE_OAUTH_TOKEN=<le-token-de-setup-token>
+#       ANTHROPIC_API_KEY=sk-ant-...        # repli (optionnel mais recommandé)
+#       EOF
+# 3) Build + run :
+#       docker compose up -d --build
+#       docker compose logs -f              # cherche  "via":"subscription"
+#
+# Puis Nginx Proxy Manager → Proxy Host vers http://127.0.0.1:3000
+# (ou http://onemoregamble:3000 via l'option "réseau partagé" en bas).
 
 services:
   app:
@@ -14,14 +22,15 @@ services:
     container_name: onemoregamble
     restart: unless-stopped
     # Loopback uniquement : jamais exposé sur l'IP publique. NPM proxifie dessus.
-    # Si NPM tourne en conteneur, il doit pouvoir joindre le loopback de l'hôte
-    # (host.docker.internal) — sinon préfère l'option "réseau partagé" plus bas.
     ports:
       - "127.0.0.1:3000:3000"
     environment:
-      # 'api' = clé seule (recommandé en conteneur) · 'auto'/'subscription' = abonnement
-      CHAT_MODE: api
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?manquant — ajoute-le dans .env à côté du compose}
+      # 'auto' = abonnement (claude -p) d'abord, puis repli sur la clé API.
+      CHAT_MODE: auto
+      # Abonnement (issu de `claude setup-token`). Sans lui, 'auto' tombe sur la clé.
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      # Repli API (per-token) si l'abonnement est indisponible.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       NUXT_PUBLIC_MODEL: ${NUXT_PUBLIC_MODEL:-claude-sonnet-4-6}
       NUXT_PUBLIC_EFFORT: ${NUXT_PUBLIC_EFFORT:-medium}
 
