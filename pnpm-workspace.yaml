@@ -1,3 +1,6 @@
-allowBuilds:
-  '@parcel/watcher': set this to true or false
-  esbuild: set this to true or false
+# pnpm settings (single app — no workspace packages).
+# Allow these trusted dependencies to run their build scripts during install.
+# Without this, pnpm 10+/11 aborts with ERR_PNPM_IGNORED_BUILDS in CI/Docker.
+onlyBuiltDependencies:
+  - '@parcel/watcher'
+  - esbuild
