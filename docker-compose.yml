@@ -1,0 +1,23 @@
+# Déploiement sur un VPS Docker :
+#   git clone git@github.com:DotDebian/onemoregamble.git && cd onemoregamble
+#   printf 'ANTHROPIC_API_KEY=sk-ant-...\n' > .env      # clé de prod (ce .env reste local, gitignoré)
+#   docker compose up -d --build
+#   docker compose logs -f
+#
+# L'app écoute alors sur http://<ip-du-vps>:3000
+# Pour un domaine + HTTPS, mets un reverse proxy (Caddy/Traefik/nginx) devant.
+
+services:
+  app:
+    build: .
+    image: onemoregamble:latest
+    container_name: onemoregamble
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # 'api' = clé seule (recommandé en conteneur) · 'auto'/'subscription' = abonnement
+      CHAT_MODE: api
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?manquant — ajoute-le dans .env à côté du compose}
+      NUXT_PUBLIC_MODEL: ${NUXT_PUBLIC_MODEL:-claude-sonnet-4-6}
+      NUXT_PUBLIC_EFFORT: ${NUXT_PUBLIC_EFFORT:-medium}
