@@ -1,0 +1,24 @@
+# Build artefacts & deps (installed/built inside the image)
+node_modules
+.nuxt
+.output
+.nitro
+.cache
+dist
+
+# Secrets & local env — pass ANTHROPIC_API_KEY at runtime instead
+.env
+.env.*
+!.env.example
+
+# VCS, editors, local tooling
+.git
+.gitignore
+.claude
+.vscode
+.idea
+.DS_Store
+
+# Logs & tests (not needed in the image)
+*.log
+test

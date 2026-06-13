@@ -1,0 +1,119 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
+/* ============================================================
+   OneMoreGamble — instrument-grade trading terminal theme
+   Near-black, IBM Plex, restrained gold accent. Green/red are
+   reserved exclusively for market data semantics.
+   ============================================================ */
+
+:root {
+  --bg-0: #0a0c10;
+  --bg-1: #0e1117;
+  --bg-2: #141922;
+  --bg-3: #1b2230;
+
+  --border: rgba(148, 163, 184, 0.12);
+  --border-strong: rgba(148, 163, 184, 0.22);
+
+  --text-0: #e9eef6;
+  --text-1: #aeb9c9;
+  --text-2: #8a96a8;
+  --text-3: #5c6776;
+
+  --up: #26d07c;
+  --up-dim: rgba(38, 208, 124, 0.14);
+  --down: #f0556a;
+  --down-dim: rgba(240, 85, 106, 0.14);
+
+  --accent: #e0b341;
+  --accent-dim: rgba(224, 179, 65, 0.14);
+  --warn: #f5a524;
+  --info: #5b8def;
+
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --radius: 10px;
+  --radius-sm: 7px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#__nuxt {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background-color: var(--bg-0);
+  /* Atmosphere: faint top glow + an instrument grid, kept very subtle. */
+  background-image:
+    radial-gradient(120% 80% at 80% -10%, rgba(224, 179, 65, 0.05), transparent 60%),
+    radial-gradient(100% 70% at 0% 0%, rgba(91, 141, 239, 0.04), transparent 55%),
+    linear-gradient(rgba(148, 163, 184, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.025) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 32px 32px, 32px 32px;
+  color: var(--text-1);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+.up {
+  color: var(--up);
+}
+.down {
+  color: var(--down);
+}
+
+/* Thin, terminal-style scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.4);
+  background-clip: content-box;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+::selection {
+  background: var(--accent-dim);
+}
+
+/* Shared section title */
+.eyebrow {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
