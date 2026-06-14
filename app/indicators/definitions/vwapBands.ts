@@ -15,9 +15,14 @@ export const vwapBandsIndicator: IndicatorDefinition = {
     let day = -1
     const vwap: number[] = []
     const sd: number[] = []
-    for (const c of candles) {
+    // Whitespace the session-open bar so the bands break cleanly at the UTC
+    // reset instead of drawing a vertical connector across midnight (mirrors
+    // the VWAP line). Volume is still accumulated; only the plot point is gapped.
+    const broke: boolean[] = []
+    candles.forEach((c, i) => {
       const d = Math.floor(c.time / 86400)
-      if (d !== day) {
+      const reset = d !== day
+      if (reset) {
         day = d
         cumPV = 0
         cumV = 0
@@ -31,9 +36,13 @@ export const vwapBandsIndicator: IndicatorDefinition = {
       const variance = cumV > 0 ? Math.max(0, cumPV2 / cumV - v * v) : NaN
       vwap.push(v)
       sd.push(Math.sqrt(variance))
-    }
+      broke.push(reset && i > 0)
+    })
     const mk = (mult: number, sign: number) =>
-      candles.map((c, i) => ({ time: c.time, value: vwap[i]! + sign * mult * sd[i]! }))
+      candles.map((c, i) => ({
+        time: c.time,
+        value: broke[i] ? NaN : vwap[i]! + sign * mult * sd[i]!,
+      }))
     const teal = (a: number) => `rgba(20,184,166,${a})`
     const plots: IndicatorPlot[] = [
       { key: 'vwapU2', label: '+2σ', kind: 'line', color: teal(0.45), lineWidth: 1, priceLineVisible: false, data: mk(2, 1) },

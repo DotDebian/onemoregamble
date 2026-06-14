@@ -9,6 +9,7 @@ import type {
   Time,
 } from 'lightweight-charts'
 import type { Drawing } from '~/composables/useDrawings'
+import { projectTimeToX, type TimeProjection } from './timeProjection'
 
 interface BitmapScope {
   context: CanvasRenderingContext2D
@@ -41,7 +42,7 @@ class DrawingsRenderer implements IPrimitivePaneRenderer {
     const series = this.source.series
     if (!chart || !series) return
     const ts = chart.timeScale()
-    const X = (t: number) => ts.timeToCoordinate(t as Time)
+    const X = (t: number) => projectTimeToX(ts, this.source.projection, t)
     const Y = (p: number) => series.priceToCoordinate(p)
 
     target.useBitmapCoordinateSpace((scope) => {
@@ -241,6 +242,8 @@ export class DrawingsPrimitive implements ISeriesPrimitive<Time> {
   drawings: Drawing[] = []
   draft: Drawing | null = null
   selectedId: string | null = null
+  /** Bar geometry for extrapolating drawings past the live candle. */
+  projection: TimeProjection | null = null
   private requestUpdate?: () => void
   private readonly paneView = new DrawingsPaneView(this)
 
@@ -254,10 +257,16 @@ export class DrawingsPrimitive implements ISeriesPrimitive<Time> {
     this.series = null
     this.requestUpdate = undefined
   }
-  setData(drawings: Drawing[], selectedId: string | null, draft: Drawing | null): void {
+  setData(
+    drawings: Drawing[],
+    selectedId: string | null,
+    draft: Drawing | null,
+    projection: TimeProjection | null,
+  ): void {
     this.drawings = drawings
     this.selectedId = selectedId
     this.draft = draft
+    this.projection = projection
     this.requestUpdate?.()
   }
   updateAllViews(): void {}

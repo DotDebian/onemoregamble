@@ -13,9 +13,10 @@ export const vwapIndicator: IndicatorDefinition = {
     let cumPV = 0
     let cumV = 0
     let currentDay = -1
-    const data = candles.map((c) => {
+    const data = candles.map((c, i) => {
       const day = Math.floor(c.time / 86400)
-      if (day !== currentDay) {
+      const reset = day !== currentDay
+      if (reset) {
         currentDay = day
         cumPV = 0
         cumV = 0
@@ -23,6 +24,11 @@ export const vwapIndicator: IndicatorDefinition = {
       const typical = (c.high + c.low + c.close) / 3
       cumPV += typical * c.volume
       cumV += c.volume
+      // Break the line at each UTC-midnight reset so the chart doesn't draw a
+      // vertical connector from yesterday's full-session VWAP to today's open
+      // (the "bizarre move"). The session-open bar is left as whitespace; VWAP
+      // resumes on the next bar — its volume is still accumulated above.
+      if (reset && i > 0) return { time: c.time, value: NaN }
       return { time: c.time, value: cumV > 0 ? cumPV / cumV : NaN }
     })
     return {

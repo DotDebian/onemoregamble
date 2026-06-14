@@ -28,6 +28,7 @@ function pick(t: DrawingTool) {
         <template v-else-if="t.icon === 'fib'"><line x1="4" y1="5" x2="20" y2="5" /><line x1="4" y1="10" x2="20" y2="10" /><line x1="4" y1="14" x2="20" y2="14" /><line x1="4" y1="19" x2="20" y2="19" /></template>
         <template v-else-if="t.icon === 'ruler'"><rect x="3" y="8" width="18" height="8" rx="1" transform="rotate(-12 12 12)" /><line x1="8" y1="9" x2="8" y2="12" /><line x1="12" y1="8" x2="12" y2="11" /><line x1="16" y1="7" x2="16" y2="10" /></template>
         <template v-else-if="t.icon === 'position'"><rect x="4" y="6" width="16" height="5" rx="1" /><rect x="4" y="13" width="16" height="5" rx="1" /></template>
+        <template v-else-if="t.icon === 'sketch'"><path d="M3 17c3-1 4-9 6-9s2 6 4 6 3-7 5-7 2 4 3 4" /></template>
       </svg>
     </button>
 

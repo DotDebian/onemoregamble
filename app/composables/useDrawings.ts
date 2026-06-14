@@ -9,6 +9,7 @@ export type DrawingTool =
   | 'fib'
   | 'measure'
   | 'position'
+  | 'sketch'
 
 export interface DPoint {
   time: number
@@ -34,6 +35,7 @@ export const TOOLS: { id: DrawingTool; label: string; icon: string; points: 1 | 
   { id: 'fib', label: 'Fibonacci', icon: 'fib', points: 2 },
   { id: 'measure', label: 'Mesure', icon: 'ruler', points: 2 },
   { id: 'position', label: 'Position / Risk-Reward', icon: 'position', points: 2 },
+  { id: 'sketch', label: 'Sketch search — dessine une figure', icon: 'sketch', points: 2 },
 ]
 
 function storageKey(symbol: string) {

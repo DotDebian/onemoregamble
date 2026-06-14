@@ -196,4 +196,40 @@ export const EDUCATION: Record<string, IndicatorEdu> = {
     ],
     tip: 'La heatmap est une estimation par modèle de levier, pas la position réelle de l\'exchange : un repère, pas une vérité.',
   },
+  echoes: {
+    name: 'Echoes — figures qui se répètent',
+    short: "Cherche dans le passé les moments où le prix formait la même figure qu'en ce moment, et projette ce qui a suivi.",
+    what: "Echoes prend la forme des dernières bougies (le motif en cours) et la compare à des milliers de fenêtres passées par corrélation. La comparaison porte sur la *forme*, pas le niveau de prix : un mouvement à 63 000 $ peut correspondre à un autre à 10 000 $.",
+    read: "Quand la projection est activée, chaque correspondance passée est rejouée vers le futur depuis la bougie actuelle : le faisceau gris montre l'éventail des trajectoires, le cône l'intervalle 10–90 %, et la ligne or la trajectoire médiane. La phrase du haut résume : combien d'échos, quel % a clôturé plus haut après N barres, et la médiane.",
+    signals: [
+      "Beaucoup d'échos très corrélés + médiane nettement orientée = signal statistique plus solide.",
+      "Un « % plus haut » proche de 50 % = pas d'edge directionnel sur cette figure.",
+      'Un cône large = issues très dispersées : le passé ne tranche pas, prudence.',
+    ],
+    tip: "Ce n'est pas une prédiction, mais « ce qui s'est passé les fois précédentes ». L'analyse ne regarde que des bougies déjà clôturées (jamais le futur) — mais le passé ne se répète jamais à l'identique.",
+  },
+  sketch: {
+    name: 'Sketch search — dessine une figure',
+    short: "Dessine une forme à la souris : l'outil retrouve où le prix a vraiment fait ça dans l'historique.",
+    what: "Tu traces une courbe libre sur le graphique. L'outil la compare à l'historique profond à plusieurs échelles de temps, par corrélation de forme (indépendante du niveau de prix), et classe les meilleures correspondances.",
+    read: "Chaque vignette est un aperçu de la fenêtre trouvée, avec son score de corrélation (r) et sa date. Clique une vignette : le graphique se recentre exactement sur ce moment de l'historique (« Retour au live » pour revenir au présent).",
+    signals: [
+      "Un score r proche de 1 = la figure historique colle très bien à ton dessin.",
+      'Dessine de gauche à droite, comme le temps s\'écoule.',
+      'Plus ta figure est marquée (creux/sommets nets), plus les correspondances sont pertinentes.',
+    ],
+    tip: "Idéal pour les figures que tu « sens » sans savoir les nommer : tu la dessines, tu vois où elle s'est déjà produite.",
+  },
+  clock: {
+    name: 'Horloge de marché',
+    short: 'Un cadran 24h qui montre quand ce marché bouge vraiment : volatilité, direction et volume par heure et par jour.',
+    what: "L'horloge agrège tout l'historique profond par heure (UTC) et par jour de la semaine. Sur le cadran : la longueur des barres = volatilité moyenne, la couleur = direction moyenne (vert haussier / rouge baissier).",
+    read: "Les barres les plus longues marquent les heures les plus actives ; le repère or indique l'heure UTC actuelle. En dessous : le volume par heure, les temps forts, et une grille heure × jour pour voir les créneaux chauds de la semaine.",
+    signals: [
+      'Trade les heures actives (barres longues) plutôt que les heures mortes.',
+      'Une heure vert vif récurrente = biais haussier historique sur ce créneau (et inversement).',
+      'Croise avec les sessions (Asie/Europe/US) pour comprendre d\'où vient l\'activité.',
+    ],
+    tip: "Tout est en UTC. Un biais historique sur un créneau est une tendance moyenne, pas une garantie.",
+  },
 }

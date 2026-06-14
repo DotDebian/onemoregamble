@@ -21,11 +21,17 @@ import {
   type LineData,
   type HistogramData,
   type WhitespaceData,
+  type MouseEventParams,
 } from 'lightweight-charts'
+import { SYMBOLS } from '~/composables/useMarket'
+import { lastFinite } from '~/indicators'
 import { SessionsPrimitive } from './chart/sessionsPrimitive'
 import { VolumeProfilePrimitive } from './chart/volumeProfilePrimitive'
 import { DrawingsPrimitive } from './chart/drawingsPrimitive'
 import { LiquidationsPrimitive } from './chart/liquidationsPrimitive'
+import { EchoesPrimitive } from './chart/echoesPrimitive'
+import { SketchPrimitive } from './chart/sketchPrimitive'
+import { projectTimeToX, projectXToTime, type TimeProjection } from './chart/timeProjection'
 import { computeSessionSegments } from '~/indicators/sessions'
 import { volumeProfile } from '~/indicators/structure'
 import { estimateLiquidationHeatmap, aggregateLiquidations } from '~/indicators/liquidations'
@@ -34,7 +40,7 @@ import type { IndicatorPlot, LineDash } from '~/indicators'
 import type { Candle } from '~/types/market'
 import type { Drawing, DPoint } from '~/composables/useDrawings'
 
-const { candles, lastTick, reloadKey, symbol } = useMarket()
+const { candles, deepCandles, lastTick, reloadKey, symbol, interval, extendHistory } = useMarket()
 const { computedIndicators, structureKey } = useIndicators()
 const { isEnabled } = useIndicatorState()
 
@@ -50,6 +56,22 @@ const { tool, drawings, selectedId, add, update, remove, select, setTool, uid, l
 const { alerts: allAlerts } = useAlerts()
 const symbolAlerts = computed(() => allAlerts.value.filter((a) => a.symbol === symbol.value))
 const { events: liqEvents } = useLiquidations()
+const {
+  enabled: echoEnabled,
+  result: echoResult,
+  horizon: echoHorizon,
+  pathsReturns: echoPaths,
+  medianReturns: echoMedian,
+  bandLow: echoLow,
+  bandHigh: echoHigh,
+} = useEchoes()
+const {
+  run: runSketch,
+  selectedMatch: sketchMatch,
+  clear: clearSketch,
+  exploring,
+  setExploring,
+} = useSketchSearch()
 
 const container = ref<HTMLDivElement | null>(null)
 let chart: IChartApi | null = null
@@ -62,12 +84,116 @@ let liqPrim: LiquidationsPrimitive | null = null
 let liqAttached = false
 let sessionsAttached = false
 let drawingsPrim: DrawingsPrimitive | null = null
+let echoesPrim: EchoesPrimitive | null = null
+let sketchPrim: SketchPrimitive | null = null
+let resizeObs: ResizeObserver | null = null
+let extending = false // re-entrancy guard for scroll-back history loading
+
+// Sketch-search freehand capture (media-space points during a single drag).
+let sketching = false
+let sketchPts: { x: number; y: number }[] = []
 const plotSeries = new Map<string, ISeriesApi<SeriesType>>()
 let indicatorLines: IPriceLine[] = []
 let alertLines: IPriceLine[] = []
 
 const legend = ref<{ o: number; h: number; l: number; c: number; change: number } | null>(null)
 let hovering = false
+
+// ---- per-pane legend (titles + indicator values at the crosshair) ----
+interface LegendPlot {
+  label: string
+  color: string
+  value: string
+}
+interface LegendGroup {
+  name: string
+  sub: string
+  plots: LegendPlot[]
+}
+interface PaneLegend {
+  key: string
+  top: number
+  isPrice: boolean
+  title: string
+  sub: string
+  groups: LegendGroup[]
+}
+const paneLegends = ref<PaneLegend[]>([])
+let lastCrosshair: MouseEventParams | null = null
+
+const priceTitle = computed(() => {
+  const label = SYMBOLS.find((s) => s.symbol === symbol.value)?.label ?? symbol.value
+  return `${label} · ${interval.value}`
+})
+
+function fmtVal(category: string, v: number | undefined): string {
+  if (v == null || !Number.isFinite(v)) return '—'
+  if (category === 'volume') return formatVolume(v)
+  if (category === 'oscillator') return formatNum(v, 2)
+  return formatPrice(v)
+}
+
+// Value of a plot at the hovered time, or its last finite value when idle.
+function plotValueAt(
+  plot: IndicatorPlot,
+  series: ISeriesApi<SeriesType> | undefined,
+  param: MouseEventParams | null,
+): number | undefined {
+  if (param?.time && series) {
+    const d = param.seriesData.get(series)
+    if (d && 'value' in d && Number.isFinite(d.value)) return d.value as number
+    return undefined // hovering a gap (e.g. VWAP session break)
+  }
+  return lastFinite(plot)?.value
+}
+
+// Rebuild the legend model. Mirrors the pane layout of rebuildIndicatorSeries:
+// price pane (0) holds overlays, each 'separate' indicator gets its own pane.
+function buildLegends(param: MouseEventParams | null) {
+  if (!chart) {
+    paneLegends.value = []
+    return
+  }
+  // Historical exploration strips the studies — show only the price-pane title.
+  if (exploring.value) {
+    paneLegends.value = [
+      { key: 'p0', top: 0, isPrice: true, title: priceTitle.value, sub: '', groups: [] },
+    ]
+    return
+  }
+  const panesApi = chart.panes()
+  const tops: number[] = []
+  let acc = 0
+  for (let i = 0; i < panesApi.length; i++) {
+    tops[i] = acc
+    acc += panesApi[i]!.getHeight() + 1 // + separator
+  }
+  const byPane = new Map<number, LegendGroup[]>()
+  let nextPane = 1
+  for (const { def, result } of computedIndicators.value) {
+    if (!result.plots.length) continue
+    const paneIndex = def.pane === 'separate' ? nextPane++ : 0
+    const plots = result.plots.map((plot) => ({
+      label: plot.label,
+      color: plot.color,
+      value: fmtVal(def.category, plotValueAt(plot, plotSeries.get(plotId(def.id, plot.key)), param)),
+    }))
+    const arr = byPane.get(paneIndex) ?? []
+    arr.push({ name: def.name, sub: def.describe?.() ?? '', plots })
+    byPane.set(paneIndex, arr)
+  }
+  const out: PaneLegend[] = []
+  for (let i = 0; i < panesApi.length; i++) {
+    const groups = byPane.get(i) ?? []
+    if (i === 0) {
+      out.push({ key: 'p0', top: tops[i]!, isPrice: true, title: priceTitle.value, sub: '', groups })
+    } else if (groups.length) {
+      const g = groups[0]!
+      out.push({ key: `p${i}`, top: tops[i]!, isPrice: false, title: g.name, sub: g.sub, groups })
+    }
+  }
+  paneLegends.value = out
+}
 
 // Drawing interaction state
 const draft = ref<Drawing | null>(null)
@@ -86,8 +212,8 @@ function plotId(defId: string, key: string) {
 }
 
 // ---- series data conversion ----
-function toCandleData(): CandlestickData[] {
-  return candles.value.map((c) => ({
+function toCandleData(arr: Candle[] = candles.value): CandlestickData[] {
+  return arr.map((c) => ({
     time: c.time as UTCTimestamp,
     open: c.open,
     high: c.high,
@@ -269,13 +395,146 @@ function refreshLiquidations() {
   }
 }
 
+// Bar geometry so drawings can extend past the live candle (positions, rays).
+function timeProjection(): TimeProjection | null {
+  const arr = candles.value
+  const n = arr.length
+  if (n < 2) return null
+  const lastTime = arr[n - 1]!.time
+  const interval = lastTime - arr[n - 2]!.time
+  if (interval <= 0) return null
+  return { interval, lastTime, lastIndex: n - 1 }
+}
+
 // ---- drawings render ----
 function renderDrawings() {
   if (!drawingsPrim) return
   const list = dragWorking
     ? drawings.value.map((d) => (d.id === dragWorking!.id ? dragWorking! : d))
     : drawings.value
-  drawingsPrim.setData(list, selectedId.value, draft.value)
+  drawingsPrim.setData(list, selectedId.value, draft.value, timeProjection())
+}
+
+// Full chart (re)build from the live buffer — candles, studies, overlays, view.
+function fullSync() {
+  if (!chart || !candleSeries) return
+  candleSeries.setData(toCandleData())
+  rebuildIndicatorSeries()
+  applyIndicatorExtras()
+  applyAlertLines()
+  refreshSessions()
+  refreshVolumeProfile()
+  refreshLiquidations()
+  renderDrawings()
+  refreshEchoes()
+  chart.timeScale().fitContent()
+  const last = candles.value.at(-1)
+  if (last && !hovering) updateLegend(last)
+  buildLegends(lastCrosshair)
+}
+
+// ---- sketch-search historical exploration ----
+// Park the chart on a matched window anywhere in the deep buffer (which extends
+// well past the live series). We swap the candle data to the full deep history
+// and strip the live studies for a clean "shape inspector"; restoreLive() rebuilds.
+function stripStudies() {
+  if (!chart || !candleSeries) return
+  for (const s of plotSeries.values()) chart.removeSeries(s)
+  plotSeries.clear()
+  for (let i = chart.panes().length - 1; i >= 1; i--) chart.removePane(i)
+  for (const l of indicatorLines) candleSeries.removePriceLine(l)
+  indicatorLines = []
+  markersApi?.setMarkers([])
+  if (sessionsAttached && sessionsPrim) {
+    candleSeries.detachPrimitive(sessionsPrim)
+    sessionsAttached = false
+  }
+  if (vpAttached && vpPrim) {
+    vpPrim.setProfile(null)
+    candleSeries.detachPrimitive(vpPrim)
+    vpAttached = false
+  }
+  if (liqAttached && liqPrim) {
+    candleSeries.detachPrimitive(liqPrim)
+    liqAttached = false
+  }
+}
+
+function jumpToMatch(m: { startTime: number; endTime: number }) {
+  if (!chart || !candleSeries) return
+  if (!exploring.value) {
+    stripStudies()
+    candleSeries.setData(toCandleData(deepCandles.value))
+    setExploring(true)
+    refreshEchoes() // gated off while exploring
+    buildLegends(lastCrosshair) // collapse to the price-only legend
+  }
+  sketchPrim?.setHighlight({ startTime: m.startTime, endTime: m.endTime })
+  const span = Math.max(m.endTime - m.startTime, 1)
+  const pad = span * 0.8
+  try {
+    chart.timeScale().setVisibleRange({
+      from: (m.startTime - pad) as Time,
+      to: (m.endTime + pad) as Time,
+    })
+  } catch {
+    // the library clamps out-of-range bounds; ignore
+  }
+}
+
+function restoreLive() {
+  sketchPrim?.setHighlight(null)
+  fullSync() // rebuilds candles, studies and overlays from the live buffer
+  chart
+    ?.timeScale()
+    .applyOptions({ rightOffset: echoEnabled.value ? Math.min(90, echoHorizon.value + 8) : 4 })
+}
+
+// Reveal more past as the user scrolls toward the left edge, by pulling the next
+// chunk from the in-memory deep buffer (no network). The view is pinned to the
+// same time range so prepending bars doesn't make the chart jump.
+function maybeExtendHistory() {
+  if (!chart || !candleSeries || exploring.value || extending) return
+  const lr = chart.timeScale().getVisibleLogicalRange()
+  // Only when the user has scrolled to the left edge of the loaded bars while the
+  // live edge is off-screen to the right — never on the initial fit-all (where
+  // from≈0 but the whole series, including the live edge, is in view).
+  if (!lr || lr.from > 30 || lr.to >= candles.value.length - 5) return
+  extending = true
+  const before = chart.timeScale().getVisibleRange()
+  if (extendHistory()) {
+    candleSeries.setData(toCandleData())
+    rebuildIndicatorSeries()
+    applyIndicatorExtras()
+    applyAlertLines()
+    refreshSessions()
+    renderDrawings()
+    refreshEchoes()
+    if (before) {
+      try {
+        chart.timeScale().setVisibleRange(before)
+      } catch {
+        // ignore — the library clamps if the saved range no longer fits
+      }
+    }
+  }
+  extending = false
+}
+
+// ---- echoes forward projection ----
+function refreshEchoes() {
+  if (!echoesPrim) return
+  const on = echoEnabled.value && !exploring.value
+  echoesPrim.setData({
+    enabled: on,
+    lastClose: candles.value.at(-1)?.close ?? null,
+    projection: timeProjection(),
+    horizon: echoHorizon.value,
+    paths: on ? echoPaths.value : [],
+    median: on ? echoMedian.value : [],
+    bandLow: on ? echoLow.value : [],
+    bandHigh: on ? echoHigh.value : [],
+  })
 }
 
 // ---- pointer helpers ----
@@ -286,17 +545,14 @@ function evtXY(ev: PointerEvent) {
 function toData(x: number, y: number): DPoint | null {
   if (!chart || !candleSeries) return null
   const price = candleSeries.coordinateToPrice(y)
-  let time = chart.timeScale().coordinateToTime(x) as number | null
-  if (time == null) {
-    const last = candles.value.at(-1)
-    time = last ? last.time : null
-  }
+  // Project into the future when the click lands past the live candle, so the
+  // point doesn't collapse back onto the last bar (lets you place a position).
+  const time = projectXToTime(chart.timeScale(), timeProjection(), x)
   if (price == null || time == null) return null
   return { time: Number(time), price: Number(price) }
 }
 function sx(p: DPoint): number | null {
-  const x = chart!.timeScale().timeToCoordinate(p.time as Time)
-  return x == null ? null : x
+  return projectTimeToX(chart!.timeScale(), timeProjection(), p.time)
 }
 function sy(price: number): number | null {
   const y = candleSeries!.priceToCoordinate(price)
@@ -381,6 +637,19 @@ function makePosition(entry: DPoint, end: DPoint): Drawing {
 function onPointerDown(ev: PointerEvent) {
   if (!container.value) return
   const { x, y } = evtXY(ev)
+
+  if (tool.value === 'sketch') {
+    sketching = true
+    sketchPts = [{ x, y }]
+    try {
+      container.value.setPointerCapture(ev.pointerId)
+    } catch {
+      // capture is a nicety; the move/up handlers work without it
+    }
+    sketchPrim?.setStroke(sketchPts.slice())
+    return
+  }
+
   const p = toData(x, y)
   if (!p) return
 
@@ -434,6 +703,12 @@ function onPointerMove(ev: PointerEvent) {
   if (!container.value) return
   const { x, y } = evtXY(ev)
 
+  if (sketching) {
+    sketchPts.push({ x, y })
+    sketchPrim?.setStroke(sketchPts.slice())
+    return
+  }
+
   if (pending && draft.value) {
     const p = toData(x, y)
     if (p) {
@@ -481,7 +756,29 @@ function onPointerMove(ev: PointerEvent) {
   }
 }
 
+function finalizeSketch() {
+  const pts = sketchPts
+  sketchPts = []
+  sketchPrim?.setStroke([])
+  if (pts.length >= 2) {
+    // left→right order, flip Y so a higher drawn point = a higher price
+    const sorted = pts.slice().sort((a, b) => a.x - b.x)
+    runSketch(sorted.map((q) => -q.y))
+  }
+  setTool('cursor')
+}
+
 function onPointerUp(ev: PointerEvent) {
+  if (sketching) {
+    sketching = false
+    try {
+      container.value?.releasePointerCapture?.(ev.pointerId)
+    } catch {
+      // pointer may not have been captured (e.g. synthetic events)
+    }
+    finalizeSketch()
+    return
+  }
   if (dragState && dragWorking) {
     update(dragWorking.id, dragWorking)
     dragWorking = null
@@ -520,6 +817,7 @@ function updateLegend(c: { open: number; high: number; low: number; close: numbe
 
 let overlayRaf = 0
 function scheduleOverlays() {
+  if (exploring.value) return
   if (!isEnabled('volumeProfile') && !isEnabled('liquidations')) return
   if (overlayRaf) return
   overlayRaf = requestAnimationFrame(() => {
@@ -571,49 +869,47 @@ onMounted(() => {
   liqPrim = new LiquidationsPrimitive()
   drawingsPrim = new DrawingsPrimitive()
   candleSeries.attachPrimitive(drawingsPrim)
+  echoesPrim = new EchoesPrimitive()
+  candleSeries.attachPrimitive(echoesPrim)
+  sketchPrim = new SketchPrimitive()
+  candleSeries.attachPrimitive(sketchPrim)
 
   chart.subscribeCrosshairMove((param) => {
-    if (param.time && candleSeries) {
-      const data = param.seriesData.get(candleSeries) as CandlestickData | undefined
-      if (data) {
-        hovering = true
-        updateLegend(data)
-        return
-      }
+    lastCrosshair = param
+    const data =
+      param.time && candleSeries
+        ? (param.seriesData.get(candleSeries) as CandlestickData | undefined)
+        : undefined
+    if (data) {
+      hovering = true
+      updateLegend(data)
+    } else {
+      hovering = false
+      const last = candles.value.at(-1)
+      if (last) updateLegend(last)
     }
-    hovering = false
-    const last = candles.value.at(-1)
-    if (last) updateLegend(last)
+    buildLegends(param)
   })
 
-  chart.timeScale().subscribeVisibleLogicalRangeChange(() => scheduleOverlays())
-
-  const fullSync = () => {
-    if (!chart || !candleSeries) return
-    candleSeries.setData(toCandleData())
-    rebuildIndicatorSeries()
-    applyIndicatorExtras()
-    applyAlertLines()
-    refreshSessions()
-    refreshVolumeProfile()
-    refreshLiquidations()
-    renderDrawings()
-    chart.timeScale().fitContent()
-    const last = candles.value.at(-1)
-    if (last && !hovering) updateLegend(last)
-  }
+  chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+    scheduleOverlays()
+    maybeExtendHistory()
+  })
 
   if (candles.value.length) fullSync()
 
   watch(reloadKey, fullSync)
   watch(structureKey, () => {
+    if (exploring.value) return
     rebuildIndicatorSeries()
     applyIndicatorExtras()
+    buildLegends(lastCrosshair)
   })
 
   // special-overlay toggles (sessions / volume profile / liquidations) — attach
   // or detach immediately, including when the last one is turned off.
   watch(specialKey, () => {
+    if (exploring.value) return
     refreshSessions()
     refreshVolumeProfile()
     refreshLiquidations()
@@ -630,6 +926,7 @@ onMounted(() => {
 
   watch(lastTick, (tick) => {
     if (!tick || !candleSeries) return
+    if (exploring.value) return // parked on history — don't mutate the deep series
     candleSeries.update({
       time: tick.candle.time as UTCTimestamp,
       open: tick.candle.open,
@@ -653,13 +950,40 @@ onMounted(() => {
     if (tick.isNew) {
       refreshSessions()
       applyIndicatorExtras()
+      // New bar shifts the projection origin — refresh so future-anchored
+      // drawings stay put instead of sliding a bar to the right.
+      renderDrawings()
     }
     scheduleOverlays()
+    refreshEchoes()
     if (!hovering) updateLegend(tick.candle)
+    buildLegends(lastCrosshair)
   })
 
   // re-render drawings when the store changes
   watch([drawings, selectedId], () => renderDrawings(), { deep: true })
+
+  // echoes overlay: re-project when toggled or when a fresh scan lands
+  watch([echoEnabled, echoResult], () => refreshEchoes())
+
+  // reveal the future region so the projected horizon is actually on-screen;
+  // restore the normal right margin when the projection is turned off.
+  watch([echoEnabled, echoHorizon], ([on, h]) => {
+    if (!chart) return
+    chart.timeScale().applyOptions({ rightOffset: on ? Math.min(90, h + 8) : 4 })
+  })
+
+  // sketch-search: selecting a match parks the chart on that historical window
+  // (anywhere in the deep buffer); clearing the selection drops the highlight.
+  watch(sketchMatch, (m) => {
+    if (m) jumpToMatch(m)
+    else sketchPrim?.setHighlight(null)
+  })
+
+  // "Retour au live" flips exploring off → rebuild the live chart.
+  watch(exploring, (v, was) => {
+    if (was && !v) restoreLive()
+  })
 
   // alerts → chart lines
   watch(symbolAlerts, () => applyAlertLines(), { deep: true })
@@ -669,6 +993,9 @@ onMounted(() => {
     loadForSymbol(s)
     applyAlertLines()
     renderDrawings()
+    // sketch matches index into the previous symbol's deep buffer — drop them
+    clearSketch()
+    sketchPrim?.setHighlight(null)
   })
 
   // tool change → disable chart pan while drawing
@@ -689,6 +1016,10 @@ onMounted(() => {
   el.addEventListener('pointermove', onPointerMove)
   el.addEventListener('pointerup', onPointerUp)
   window.addEventListener('keydown', onKeydown)
+
+  // Pane heights drive legend Y offsets — recompute on container resize.
+  resizeObs = new ResizeObserver(() => buildLegends(lastCrosshair))
+  resizeObs.observe(el)
 })
 
 onBeforeUnmount(() => {
@@ -697,6 +1028,8 @@ onBeforeUnmount(() => {
   el?.removeEventListener('pointermove', onPointerMove)
   el?.removeEventListener('pointerup', onPointerUp)
   window.removeEventListener('keydown', onKeydown)
+  resizeObs?.disconnect()
+  resizeObs = null
   chart?.remove()
   chart = null
   candleSeries = null
@@ -705,6 +1038,8 @@ onBeforeUnmount(() => {
   vpPrim = null
   liqPrim = null
   drawingsPrim = null
+  echoesPrim = null
+  sketchPrim = null
   plotSeries.clear()
 })
 </script>
@@ -713,14 +1048,50 @@ onBeforeUnmount(() => {
   <div class="chart-wrap">
     <div ref="container" class="chart-canvas" />
     <ChartToolbar />
-    <div v-if="legend" class="chart-legend">
-      <span class="legend-pair"><span class="legend-key">O</span>{{ formatPrice(legend.o) }}</span>
-      <span class="legend-pair"><span class="legend-key">H</span>{{ formatPrice(legend.h) }}</span>
-      <span class="legend-pair"><span class="legend-key">L</span>{{ formatPrice(legend.l) }}</span>
-      <span class="legend-pair"><span class="legend-key">C</span>{{ formatPrice(legend.c) }}</span>
-      <span class="legend-change" :class="legend.change >= 0 ? 'up' : 'down'">
-        {{ formatPct(legend.change) }}
-      </span>
+    <SketchResults />
+    <div class="pane-legends">
+      <div v-for="p in paneLegends" :key="p.key" class="pane-legend" :style="{ top: `${p.top}px` }">
+        <!-- header row: pane title (+ OHLC for the price pane) -->
+        <div class="leg-row">
+          <span class="leg-title">{{ p.title }}</span>
+          <span v-if="p.sub" class="leg-sub">{{ p.sub }}</span>
+          <template v-if="p.isPrice && legend">
+            <span class="leg-ohlc">
+              <span class="lp"><i>O</i>{{ formatPrice(legend.o) }}</span>
+              <span class="lp"><i>H</i>{{ formatPrice(legend.h) }}</span>
+              <span class="lp"><i>L</i>{{ formatPrice(legend.l) }}</span>
+              <span class="lp"><i>C</i>{{ formatPrice(legend.c) }}</span>
+              <span class="leg-change" :class="legend.change >= 0 ? 'up' : 'down'">
+                {{ formatPct(legend.change) }}
+              </span>
+            </span>
+          </template>
+          <!-- separate pane: its single indicator's values sit on the title row -->
+          <template v-else-if="!p.isPrice">
+            <span
+              v-for="pl in p.groups[0]?.plots"
+              :key="pl.label"
+              class="leg-val"
+              :style="{ color: pl.color }"
+              :title="pl.label"
+            >{{ pl.value }}</span>
+          </template>
+        </div>
+        <!-- price pane: one row per overlay indicator -->
+        <template v-if="p.isPrice">
+          <div v-for="g in p.groups" :key="g.name" class="leg-row leg-ind">
+            <span class="leg-gname">{{ g.name }}</span>
+            <span v-if="g.sub" class="leg-sub">{{ g.sub }}</span>
+            <span
+              v-for="pl in g.plots"
+              :key="pl.label"
+              class="leg-val"
+              :style="{ color: pl.color }"
+              :title="pl.label"
+            >{{ pl.value }}</span>
+          </div>
+        </template>
+      </div>
     </div>
   </div>
 </template>
@@ -736,35 +1107,76 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
 }
-.chart-legend {
+/* Per-pane legend overlay — titles + live indicator values at the crosshair. */
+.pane-legends {
   position: absolute;
-  top: 10px;
-  left: 52px;
+  inset: 0;
   z-index: 4;
-  display: flex;
-  gap: 14px;
-  padding: 6px 12px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-2);
-  background: color-mix(in srgb, var(--bg-0) 70%, transparent);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  backdrop-filter: blur(6px);
   pointer-events: none;
 }
-.legend-pair {
+.pane-legend {
+  position: absolute;
+  left: 52px;
+  right: 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+}
+.leg-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-0) 62%, transparent);
+  backdrop-filter: blur(5px);
+}
+.leg-ind {
+  background: color-mix(in srgb, var(--bg-0) 48%, transparent);
+}
+.leg-title {
+  color: var(--text-0);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.leg-gname {
+  color: var(--text-1);
+  font-weight: 500;
+}
+.leg-sub {
+  color: var(--text-3);
+  font-size: 10.5px;
+}
+.leg-ohlc {
   display: inline-flex;
-  gap: 5px;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--text-2);
+}
+.lp {
+  display: inline-flex;
+  gap: 4px;
   align-items: baseline;
 }
-.legend-key {
+.lp i {
   color: var(--text-3);
+  font-style: normal;
 }
-.legend-change.up {
+.leg-val {
+  font-weight: 500;
+}
+.leg-change.up {
   color: var(--up);
 }
-.legend-change.down {
+.leg-change.down {
   color: var(--down);
 }
 </style>

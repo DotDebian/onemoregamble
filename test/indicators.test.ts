@@ -14,6 +14,8 @@ import {
   sessionStatuses,
   SESSIONS,
 } from '../app/indicators/sessions'
+import { vwapIndicator } from '../app/indicators/definitions/vwap'
+import { vwapBandsIndicator } from '../app/indicators/definitions/vwapBands'
 import type { Candle } from '../app/types/market'
 
 describe('moving averages', () => {
@@ -84,6 +86,48 @@ describe('ATR', () => {
     const out = averageTrueRange(high, low, close, 14)
     expect(out.at(-1)!).toBeGreaterThan(0)
     expect(Number.isFinite(out.at(-1)!)).toBe(true)
+  })
+})
+
+describe('VWAP session reset', () => {
+  // 2024-01-01 00:00 UTC. Two days of hourly candles crossing one midnight.
+  const midnightUtc = 1704067200
+  const candles: Candle[] = []
+  for (let i = 0; i < 48; i++) {
+    const t = midnightUtc + 12 * 3600 + i * 3600 // start midday so day 1 has bars
+    const base = 100 + i
+    candles.push({ time: t, open: base, high: base + 1, low: base - 1, close: base, volume: 10 })
+  }
+  // Index where the UTC day flips (first bar of day 2).
+  const resetIdx = candles.findIndex(
+    (c, i) => i > 0 && Math.floor(c.time / 86400) !== Math.floor(candles[i - 1]!.time / 86400),
+  )
+
+  it('breaks the line (whitespace) at the midnight reset so no vertical connector is drawn', () => {
+    const { plots } = vwapIndicator.compute(candles)
+    const data = plots[0]!.data
+    expect(resetIdx).toBeGreaterThan(0)
+    expect(Number.isFinite(data[resetIdx]!.value)).toBe(false) // gap at session open
+    expect(Number.isFinite(data[0]!.value)).toBe(true) // no leading gap
+    expect(Number.isFinite(data[resetIdx + 1]!.value)).toBe(true) // resumes next bar
+  })
+
+  it('restarts the average each session (post-reset VWAP tracks the new day, not day 1)', () => {
+    const { plots } = vwapIndicator.compute(candles)
+    const data = plots[0]!.data
+    const postReset = data[resetIdx + 1]!.value // includes the reset bar's volume
+    const day2Close = candles[resetIdx + 1]!.close
+    // Fresh session: VWAP sits within a couple bars of the new day's price,
+    // not dragged down by day 1's lower prices.
+    expect(Math.abs(postReset - day2Close)).toBeLessThan(5)
+  })
+
+  it('bands also break at the reset', () => {
+    const { plots } = vwapBandsIndicator.compute(candles)
+    for (const plot of plots) {
+      expect(Number.isFinite(plot.data[resetIdx]!.value)).toBe(false)
+      expect(Number.isFinite(plot.data[0]!.value)).toBe(true)
+    }
   })
 })
 

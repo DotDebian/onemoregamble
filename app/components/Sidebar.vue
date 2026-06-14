@@ -1,17 +1,43 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { describeAlert } from '~/composables/useAlerts'
 import { useChatDock, CHAT_MIN_H } from '~/composables/useChatDock'
 
-const tabs = [
-  { id: 'ind', label: 'Indicateurs' },
-  { id: 'form', label: 'Formation' },
-  { id: 'flow', label: 'Order flow' },
-  { id: 'alerts', label: 'Alertes' },
-  { id: 'risk', label: 'Risque' },
+// Two-level navigation: a group selector on top, then only that group's tabs —
+// keeps the tab row from getting cramped as features are added.
+const groups = [
+  {
+    id: 'chart',
+    label: 'Graphique',
+    tabs: [
+      { id: 'ind', label: 'Indicateurs' },
+      { id: 'echoes', label: 'Echoes' },
+      { id: 'flow', label: 'Order flow' },
+    ],
+  },
+  {
+    id: 'tools',
+    label: 'Outils',
+    tabs: [
+      { id: 'clock', label: 'Horloge' },
+      { id: 'form', label: 'Formation' },
+      { id: 'alerts', label: 'Alertes' },
+      { id: 'risk', label: 'Risque' },
+    ],
+  },
 ] as const
-type TabId = (typeof tabs)[number]['id']
+type GroupId = (typeof groups)[number]['id']
+type TabId = (typeof groups)[number]['tabs'][number]['id']
+
+const activeGroup = ref<GroupId>('chart')
 const active = ref<TabId>('ind')
+const currentTabs = computed(() => groups.find((g) => g.id === activeGroup.value)!.tabs)
+
+function selectGroup(id: GroupId) {
+  if (activeGroup.value === id) return
+  activeGroup.value = id
+  active.value = groups.find((g) => g.id === id)!.tabs[0].id
+}
 
 const { lastTriggered } = useAlerts()
 const toast = ref<string | null>(null)
@@ -69,19 +95,34 @@ function endDrag(e: PointerEvent) {
     :style="{ '--chat-h': collapsed ? 'auto' : height + 'px' }"
   >
     <div class="sidebar-top">
-      <nav class="tabs">
-        <button
-          v-for="t in tabs"
-          :key="t.id"
-          class="tab"
-          :class="{ active: active === t.id }"
-          @click="active = t.id"
-        >
-          {{ t.label }}
-        </button>
-      </nav>
+      <div class="nav">
+        <div class="group-seg">
+          <button
+            v-for="g in groups"
+            :key="g.id"
+            class="group-btn"
+            :class="{ active: activeGroup === g.id }"
+            @click="selectGroup(g.id)"
+          >
+            {{ g.label }}
+          </button>
+        </div>
+        <nav class="tabs">
+          <button
+            v-for="t in currentTabs"
+            :key="t.id"
+            class="tab"
+            :class="{ active: active === t.id }"
+            @click="active = t.id"
+          >
+            {{ t.label }}
+          </button>
+        </nav>
+      </div>
       <div class="tab-body">
         <IndicatorPanel v-if="active === 'ind'" />
+        <EchoesPanel v-else-if="active === 'echoes'" />
+        <MarketClockPanel v-else-if="active === 'clock'" />
         <FormationPanel v-else-if="active === 'form'" />
         <OrderFlowPanel v-else-if="active === 'flow'" />
         <AlertsPanel v-else-if="active === 'alerts'" />
@@ -133,6 +174,36 @@ function endDrag(e: PointerEvent) {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+.nav {
+  flex-shrink: 0;
+}
+.group-seg {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+}
+.group-btn {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-3);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  transition: all 0.13s ease;
+}
+.group-btn:hover {
+  color: var(--text-1);
+}
+.group-btn.active {
+  color: var(--text-0);
+  background: var(--bg-3);
+  border-color: var(--border-strong);
 }
 .tabs {
   display: flex;
